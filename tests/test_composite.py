@@ -1,4 +1,4 @@
-from ocde.composite import compute_composite, DEFAULT_WEIGHTS
+from ocde.composite import DEFAULT_WEIGHTS, compute_composite
 from ocde.confidence import WideningSignal
 from ocde.dispersion import DispersionSignal
 from ocde.divergence import DivergenceSignal
@@ -109,7 +109,12 @@ def test_reason_includes_active_components():
 
 
 def test_components_passed_through():
-    score = compute_composite("btc", divergence=_div(0.4), confidence=_conf(0.6), dispersion=_disp(0.2))
+    score = compute_composite(
+        "btc",
+        divergence=_div(0.4),
+        confidence=_conf(0.6),
+        dispersion=_disp(0.2),
+    )
     assert score.divergence == 0.4
     assert score.confidence_widening == 0.6
     assert score.dispersion == 0.2

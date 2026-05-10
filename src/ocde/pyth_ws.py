@@ -19,11 +19,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from typing import Any
 
-from .divergence import OraclePrice
 from .dispersion import PublisherQuote
+from .divergence import OraclePrice
 from .settings import settings
 
 log = logging.getLogger(__name__)
@@ -54,8 +53,8 @@ class PythSnapshot:
 def parse_feed_ids() -> dict[str, str]:
     """Pure: alias → feed_id_hex (lowercase, no 0x prefix)."""
     out: dict[str, str] = {}
-    for pair in settings.pyth_feed_ids_csv.split(","):
-        pair = pair.strip()
+    for raw_pair in settings.pyth_feed_ids_csv.split(","):
+        pair = raw_pair.strip()
         if not pair or ":" not in pair:
             continue
         alias, feed_id = pair.split(":", 1)
@@ -139,7 +138,7 @@ async def run_subscriber(snapshot: PythSnapshot, *, stop_event: asyncio.Event) -
             log.exception("pyth_ws.disconnect err=%s; backoff=%.1fs", e, backoff_sec)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=backoff_sec)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             backoff_sec = min(60.0, backoff_sec * 2.0)
 

@@ -9,7 +9,6 @@ from fastapi import FastAPI, Response
 
 from .pyth_ws import PythSnapshot
 from .redis_client import get_client
-from .settings import settings
 
 log = logging.getLogger(__name__)
 

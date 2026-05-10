@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import signal
 import time
 
@@ -94,7 +93,7 @@ async def scoring_loop(
         sleep_for = max(0.0, settings.cycle_interval_sec - elapsed)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=sleep_for)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
 
@@ -123,7 +122,7 @@ async def main() -> None:
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: stop_event.set())
+        loop.add_signal_handler(sig, stop_event.set)
 
     await asyncio.gather(
         run_subscriber(pyth_snap, stop_event=stop_event),
