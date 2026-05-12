@@ -31,17 +31,20 @@ class Settings(BaseSettings):
     )
 
     # --- Chainlink Data Streams (consumes from chainlink-streams Redis) ---
-    # Default expanded to Tier 1+2 = 29 aliases (matches Chainlink streams
-    # catalog as of 2026-05-12; see chainlink-streams/scripts/feed-ids-reference.md).
-    # Cross-asset aliases here drive OCDE divergence + dispersion across more
-    # assets, even if Pyth side is narrower (composite gracefully falls back
-    # to single-source confidence widening when only one feed is available).
-    chainlink_feed_aliases_csv: str = (
-        "btc,eth,sol,usdc,wsteth,"
-        "avax,pol,arb,op,link,near,atom,doge,"
-        "bnb,xrp,usdt,ada,dot,aave,uni,ltc,"
-        "trx,ton,shib,pepe,sui,apt,inj,tia"
-    )
+    # Default reflects what our Chainlink account is currently entitled to
+    # (verified 2026-05-12 via /api/v1/feeds): 7 majors covering the largest
+    # crypto markets + Hyperliquid (HYPE).
+    #
+    # Missing from entitlements (request from Chainlink contact when ready):
+    #   - USDC, USDT (stable pricing for liquidation-bot debt valuation)
+    #   - WSTETH (Aave V3 ETH collateral)
+    #   - WBTC if separate from BTC/USD spot
+    #
+    # OCDE composite gracefully degrades for non-entitled aliases — divergence
+    # contributes 0 if no chainlink data, but Pyth-only confidence + dispersion
+    # signals still score. So expand this list AFTER getting more Chainlink
+    # entitlements, not before.
+    chainlink_feed_aliases_csv: str = "btc,eth,sol,bnb,xrp,doge,hype"
     chainlink_redis_key_pattern: str = "chainlink:{alias}:latest"
 
     # --- Composite scoring ---
