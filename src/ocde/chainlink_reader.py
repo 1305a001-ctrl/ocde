@@ -15,9 +15,13 @@ from .redis_client import get_client
 log = logging.getLogger(__name__)
 
 
-async def read_chainlink_price(alias: str) -> OraclePrice | None:
+async def read_chainlink_price(alias: str) -> OraclePrice | None:  # noqa: PLR0912
     """Fetch latest chainlink:<alias>:latest from Redis. Returns None
-    if missing or malformed."""
+    if missing or malformed.
+
+    The branch count is high because we defensively parse three different
+    timestamp formats and two price representations. Inlining each as
+    a separate try/except is more legible than extracting helpers."""
     r = await get_client()
     key = f"chainlink:{alias}:latest"
     raw = await r.get(key)
