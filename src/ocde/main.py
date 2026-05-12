@@ -18,6 +18,7 @@ from .confidence import ConfidenceSnapshot, ConfidenceTracker
 from .dispersion import compute_dispersion
 from .divergence import compute_divergence
 from .health import make_app
+from .pyth_publisher import publish_pyth_price
 from .pyth_ws import PythSnapshot, parse_feed_ids, run_subscriber
 from .redis_client import close as close_redis
 from .redis_publisher import publish_score
@@ -85,6 +86,15 @@ async def scoring_loop(
                 )
 
                 await publish_score(composite)
+
+            # Publish ALL Pyth raw prices to Redis (for downstream fallback).
+            # This includes Pyth-only assets where Chainlink doesn't entitle us
+            # (USDC/USDT/WSTETH/etc) — liquidation-bot reads pyth:<alias>:latest
+            # when chainlink:<alias>:latest is missing.
+            for pyth_alias in pyth_snap.all_aliases():
+                pyth_state = pyth_snap.get(pyth_alias)
+                if pyth_state is not None:
+                    await publish_pyth_price(pyth_state[0])
 
         except Exception as e:
             log.exception("scoring_loop.cycle_failed err=%s", e)
