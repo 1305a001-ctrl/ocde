@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # Per-asset Pyth feed IDs. Fetch from https://pyth.network/developers/price-feed-ids
     # Stored as comma-separated key:value (alias:hex_id).
     # Default: BTC, ETH, SOL, USDC mainnet feeds (May 2026 snapshot).
+    # cbeth is included here even though Chainlink doesn't publish it,
+    # so liquidation-bot can still cover Aave V3 Base via Pyth fallback.
     pyth_feed_ids_csv: str = (
         "btc:e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43,"
         "eth:ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace,"
@@ -29,7 +31,17 @@ class Settings(BaseSettings):
     )
 
     # --- Chainlink Data Streams (consumes from chainlink-streams Redis) ---
-    chainlink_feed_aliases_csv: str = "btc,eth,sol,usdc"
+    # Default expanded to Tier 1+2 = 29 aliases (matches Chainlink streams
+    # catalog as of 2026-05-12; see chainlink-streams/scripts/feed-ids-reference.md).
+    # Cross-asset aliases here drive OCDE divergence + dispersion across more
+    # assets, even if Pyth side is narrower (composite gracefully falls back
+    # to single-source confidence widening when only one feed is available).
+    chainlink_feed_aliases_csv: str = (
+        "btc,eth,sol,usdc,wsteth,"
+        "avax,pol,arb,op,link,near,atom,doge,"
+        "bnb,xrp,usdt,ada,dot,aave,uni,ltc,"
+        "trx,ton,shib,pepe,sui,apt,inj,tia"
+    )
     chainlink_redis_key_pattern: str = "chainlink:{alias}:latest"
 
     # --- Composite scoring ---
