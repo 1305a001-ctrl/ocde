@@ -29,19 +29,51 @@ async def read_chainlink_price(alias: str) -> OraclePrice | None:
         log.warning("chainlink_reader.bad_json key=%s", key)
         return None
 
-    price = data.get("benchmark_price") or data.get("price")
-    ts_ms = data.get("timestamp_ms") or (
-        int(data.get("timestamp", 0) * 1000) if "timestamp" in data else 0
-    )
-    if price is None or price <= 0:
+    # chainlink-streams writes benchmark_price as a STRING (wei-scale int),
+    # benchmark_price_float64 as a float (USD). Prefer the float; fall back
+    # to parsing the string. NEVER compare the raw string to a number.
+    price_raw = data.get("benchmark_price_float64")
+    if price_raw is None:
+        price_str = data.get("benchmark_price") or data.get("price")
+        try:
+            price_raw = float(price_str) if price_str is not None else None
+        except (ValueError, TypeError):
+            price_raw = None
+
+    if price_raw is None:
         return None
+    try:
+        price_usd = float(price_raw)
+    except (ValueError, TypeError):
+        return None
+    if price_usd <= 0:
+        return None
+
+    # Timestamp: prefer received_at_ns (sub-ms), then valid_from_ts*1000,
+    # then any explicit timestamp_ms field. All produce an int ms.
+    ts_ms = 0
+    if data.get("received_at_ns"):
+        try:
+            ts_ms = int(data["received_at_ns"]) // 1_000_000
+        except (ValueError, TypeError):
+            ts_ms = 0
+    if ts_ms == 0 and data.get("valid_from_ts"):
+        try:
+            ts_ms = int(data["valid_from_ts"]) * 1000
+        except (ValueError, TypeError):
+            ts_ms = 0
+    if ts_ms == 0 and data.get("timestamp_ms"):
+        try:
+            ts_ms = int(data["timestamp_ms"])
+        except (ValueError, TypeError):
+            ts_ms = 0
 
     return OraclePrice(
         source="chainlink",
         asset_alias=alias,
-        price_usd=float(price),
+        price_usd=price_usd,
         confidence_usd=0.0,    # Chainlink Data Streams doesn't publish ±band
-        timestamp_ms=int(ts_ms),
+        timestamp_ms=ts_ms,
     )
 
 
