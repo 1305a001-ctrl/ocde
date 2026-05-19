@@ -111,6 +111,27 @@ class Settings(BaseSettings):
     pyth_latest_template: str = "pyth:{alias}:latest"
     pyth_publish_min_interval_ms: int = 100   # don't write more than 10/sec/asset
 
+    # --- HYPE 3-source divergence (Streams vs RedStone vs HL order book) ---
+    # HyperEVM lending audit ruled out atomic-Streams liquidation on HyperLend —
+    # production HYPE markets price off RedStone push, not Streams. Instead of
+    # liquidating, we emit a cross-oracle gap signal that captures the spread
+    # between:
+    #   (1) Chainlink Data Streams HYPE — our sub-second edge feed
+    #   (2) RedStone on-chain HYPE     — what HyperLend actually reads
+    #   (3) Hyperliquid order-book mid  — likely the upstream venue
+    # Strategy-runners + Liquidity Pulse can consume this downstream.
+    hyperevm_rpc_url: str = "https://rpc.hyperliquid.xyz/evm"
+    # RedStone HYPE/USD price source on HyperEVM (verified 2026-05-20)
+    redstone_hype_source: str = "0x40EA33eA76Fbe35e9FB422eDd175b8c8D84A63Cc"
+    redstone_hype_decimals: int = 8
+    hyperliquid_api_url: str = "https://api.hyperliquid.xyz/info"
+    hype_divergence_poll_interval_s: int = 5
+    hype_divergence_threshold_bps: float = 30.0
+    hype_divergence_velocity_window_n: int = 12
+    hype_divergence_stream_maxlen: int = 100_000
+    hype_divergence_latest_key: str = "ocde:hype:divergence:latest"
+    hype_divergence_stream_key: str = "ocde:hype:divergence"
+
     # --- HTTP ---
     http_host: str = "0.0.0.0"  # noqa: S104  — bound to 127.0.0.1 in compose
     http_port: int = 8014
