@@ -1,26 +1,33 @@
-"""OCDE entrypoint — three concurrent loops:
+"""OCDE entrypoint — four concurrent loops:
   1. Pyth WS subscriber (long-lived; reconnects on disconnect).
   2. Composite-scoring loop (every cycle_interval_sec).
-  3. FastAPI /health + /metrics (uvicorn).
+  3. HYPE 3-source divergence loop (Streams vs RedStone vs HL).
+  4. FastAPI /health + /metrics (uvicorn).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import time
 
+import httpx
 import structlog
 import uvicorn
 
-from .chainlink_reader import read_chainlink_prices
+from .chainlink_reader import read_chainlink_price, read_chainlink_prices
 from .composite import compute_composite
 from .confidence import ConfidenceSnapshot, ConfidenceTracker
 from .dispersion import compute_dispersion
-from .divergence import compute_divergence
+from .divergence import OraclePrice, compute_divergence
 from .health import make_app
+from .hype_divergence import HypeDivergenceSignal, VelocityHistory, compute_hype_divergence
+from .hyperevm_reader import read_redstone_hype_price
+from .hyperliquid_reader import read_hl_hype_mid
 from .pyth_publisher import publish_pyth_price
 from .pyth_ws import PythSnapshot, parse_feed_ids, run_subscriber
 from .redis_client import close as close_redis
+from .redis_client import get_client
 from .redis_publisher import publish_score
 from .settings import settings
 
@@ -107,6 +114,96 @@ async def scoring_loop(
             pass
 
 
+async def hype_divergence_loop(stop_event: asyncio.Event) -> None:
+    """Read HYPE price from 3 sources concurrently, emit cross-oracle gap.
+
+    Each cycle:
+      1. Concurrently fetch streams (Redis) + redstone (HyperEVM RPC) + HL (HTTP).
+      2. Convert exceptions to None so the math is uniformly None-tolerant.
+      3. Compute HypeDivergenceSignal (pure math).
+      4. SET ocde:hype:divergence:latest (TTL 60s) + XADD stream entry.
+    """
+    history = VelocityHistory(window_n=settings.hype_divergence_velocity_window_n)
+    # Reuse one httpx client across cycles for connection pooling
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        while not stop_event.is_set():
+            cycle_start = time.monotonic()
+            try:
+                results = await asyncio.gather(
+                    read_chainlink_price("hype"),
+                    read_redstone_hype_price(client=http_client),
+                    read_hl_hype_mid(client=http_client),
+                    return_exceptions=True,
+                )
+
+                # Convert exceptions to None — degrade gracefully if any source fails.
+                streams_price: OraclePrice | None = None
+                redstone_price: OraclePrice | None = None
+                hl_mid: OraclePrice | None = None
+                names = ("streams", "redstone", "hl")
+                for i, res in enumerate(results):
+                    if isinstance(res, BaseException):
+                        log.warning("hype_divergence.source_failed source=%s err=%s", names[i], res)
+                        continue
+                    if i == 0:
+                        streams_price = res  # type: ignore[assignment]
+                    elif i == 1:
+                        redstone_price = res  # type: ignore[assignment]
+                    else:
+                        hl_mid = res  # type: ignore[assignment]
+
+                sig = compute_hype_divergence(
+                    streams_price,
+                    redstone_price,
+                    hl_mid,
+                    history=history.entries,
+                    threshold_bps=settings.hype_divergence_threshold_bps,
+                )
+                history.append(sig.ts_ms or int(time.time() * 1000), sig.max_div_bps)
+
+                await _publish_hype_divergence(sig)
+
+            except Exception as e:
+                log.exception("hype_divergence_loop.cycle_failed err=%s", e)
+
+            elapsed = time.monotonic() - cycle_start
+            sleep_for = max(0.0, settings.hype_divergence_poll_interval_s - elapsed)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_for)
+            except TimeoutError:
+                pass
+
+
+async def _publish_hype_divergence(sig: HypeDivergenceSignal) -> None:
+    """Write the HYPE divergence signal to Redis (latest key + stream)."""
+    payload = {
+        "ts_ms": sig.ts_ms,
+        "streams_price": sig.streams_price,
+        "redstone_price": sig.redstone_price,
+        "hl_mid": sig.hl_mid,
+        "div_streams_redstone_bps": sig.div_streams_redstone_bps,
+        "div_streams_hl_bps": sig.div_streams_hl_bps,
+        "div_redstone_hl_bps": sig.div_redstone_hl_bps,
+        "max_div_bps": sig.max_div_bps,
+        "leader": sig.leader,
+        "velocity_bps_per_min": sig.velocity_bps_per_min,
+        "reason": sig.reason,
+    }
+    payload_json = json.dumps(payload)
+
+    try:
+        r = await get_client()
+        await r.set(settings.hype_divergence_latest_key, payload_json, ex=60)
+        await r.xadd(
+            settings.hype_divergence_stream_key,
+            {"payload": payload_json},
+            maxlen=settings.hype_divergence_stream_maxlen,
+            approximate=True,
+        )
+    except Exception:
+        log.exception("hype_divergence.publish_failed")
+
+
 async def main() -> None:
     log.info("ocde.start version=0.1.0")
 
@@ -137,6 +234,7 @@ async def main() -> None:
     await asyncio.gather(
         run_subscriber(pyth_snap, stop_event=stop_event),
         scoring_loop(pyth_snap, confidence_tracker, stop_event),
+        hype_divergence_loop(stop_event),
         server.serve(),
         return_exceptions=True,
     )

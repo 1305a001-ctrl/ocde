@@ -48,6 +48,39 @@ Default composite weights: 0.5 / 0.3 / 0.2. Override per-strategy.
                            ocde:score:<alias>:latest (cheap read)
 ```
 
+### HYPE 3-source divergence
+
+A parallel loop emits cross-oracle gap signals for HYPE specifically.
+HyperLend (the largest HyperEVM lending market) prices HYPE off **RedStone
+push**, not Chainlink Data Streams — so atomic-Streams liquidation isn't
+available on HyperLend. Instead, OCDE captures the gap between three
+independent HYPE sources every 5 seconds:
+
+| # | Source | Where |
+|---|---|---|
+| 1 | Chainlink Data Streams | `chainlink:hype:latest` (Redis, from chainlink-streams) |
+| 2 | RedStone on-chain | `eth_call latestAnswer()` to the HyperEVM price source (raw JSON-RPC) |
+| 3 | Hyperliquid order-book mid | `POST /info {"type":"allMids"}` |
+
+Each cycle the loop:
+1. Reads all three concurrently (`asyncio.gather`, `return_exceptions=True`).
+2. Computes pairwise bps gaps + the leader (source furthest from median) +
+   velocity (rate-of-change of `max_div_bps` per minute over a rolling window).
+3. Writes the signal to Redis as:
+   - `SET ocde:hype:divergence:latest` (TTL 60s) — cheap latest read
+   - `XADD ocde:hype:divergence` — capped history stream (~100k entries)
+
+Strategy-runners can read `ocde:hype:divergence:latest` and trigger trades
+when `max_div_bps > threshold` with directional bias from `leader`. The
+loop degrades gracefully — any failing source just becomes `None` and the
+math handles it (`reason="single_source"` when only one survives).
+
+Tunables (all in settings.py, env-overridable):
+
+- `hype_divergence_poll_interval_s` (default 5)
+- `hype_divergence_threshold_bps` (default 30)
+- `hype_divergence_velocity_window_n` (default 12 samples ≈ 1 min)
+
 ## Where
 
 - **Process**: ai-staging (Ryzen 3600 + RTX 2060). Lives in the
@@ -110,8 +143,8 @@ composite's `reason` field for downstream debugging.
 PYTHONPATH=src pytest -q
 ```
 
-36+ tests (purely unit tests on the math; the WS subscriber and Redis
-publisher are exercised in integration only).
+82 tests (purely unit tests on the math + injected-stub readers; the WS
+subscriber and Redis publisher are exercised in integration only).
 
 ## Security
 
