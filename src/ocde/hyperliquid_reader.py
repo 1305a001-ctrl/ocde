@@ -6,6 +6,16 @@ book is almost certainly upstream of the RedStone HYPE oracle (RedStone
 publishers aggregate from venues), so HL mid often leads both Streams
 and RedStone — making the (HL vs others) gap a forward-looking signal.
 
+Key-name verification (2026-05-20):
+  - POST {"type":"meta"} to /info → "HYPE" is in the perp universe
+    (maxLeverage=10, marginTableId=52). So `allMids["HYPE"]` is the
+    PERP mid, not spot. Confirmed by absence of "HYPE" pair in spotMeta
+    universe (HYPE exists as a spot token at index 150 but has no
+    spot pair — perp is its primary venue).
+  - If HL ever renames the perp (e.g. "HYPE-PERP", "@HYPE") the reader
+    will return None with `missing_hype_key`. That's a loud failure,
+    visible in journalctl — easy to spot and patch the key name.
+
 Best-effort: failures (HTTP error, missing key, non-numeric value)
 return None and log a warning. Caller degrades gracefully.
 

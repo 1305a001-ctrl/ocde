@@ -5,6 +5,23 @@ push feeds, not Chainlink Data Streams. To measure the gap between our
 edge feed (Streams) and what HyperLend actually reads, we call the
 RedStone price source contract directly through `eth_call`.
 
+Source-of-truth pick (verified via HyperEVM forked-block reads
+2026-05-20, documented in memory/arch_hyperevm_lending_audit.md):
+  - `0x40EA33eA76Fbe35e9FB422eDd175b8c8D84A63Cc` (WHYPE source) →
+    description() = "RedStone Price Feed for HYPE". Single-source
+    HYPE/USD. This is what we want.
+  - `0x6dcFA746f7b11918eF3522c92e6429CA589C3875` (kHYPE source) →
+    description() = "kHYPE-prim:redstone/fundam-sec:chainlink/...".
+    Composite kHYPE/USD that mixes in the kHYPE-vs-HYPE staking
+    ratio. NOT what we want for HYPE-price divergence — would
+    contaminate the signal with staking-ratio drift.
+
+If HyperLend rotates the WHYPE oracle source (which it can do via
+governance — there's a `setSourceOfAsset` call on the Aave-V3 Oracle),
+the reader will silently keep reading the old (possibly stale)
+contract. Re-verify the source for `WHYPE` against the live
+Oracle.getSourceOfAsset call before each major release.
+
 Implementation note: this module deliberately uses raw httpx JSON-RPC
 rather than web3.py — OCDE has a hard no-new-dependencies rule and httpx
 is already pinned for the Pyth REST path. The function is best-effort:
