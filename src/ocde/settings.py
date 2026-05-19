@@ -124,6 +124,25 @@ class Settings(BaseSettings):
     # RedStone HYPE/USD price source on HyperEVM (verified 2026-05-20)
     redstone_hype_source: str = "0x40EA33eA76Fbe35e9FB422eDd175b8c8D84A63Cc"
     redstone_hype_decimals: int = 8
+    # HyperLend Aave-V3-style Oracle on HyperEVM — exposes
+    # `getSourceOfAsset(token)` returning the per-asset aggregator. Governance
+    # can rotate the source via `setSourceOfAsset` (rare but possible). When
+    # that happens, OCDE silently continues reading the OLD aggregator if we
+    # don't notice — which would contaminate the HYPE divergence signal with
+    # whatever the old contract is (potentially stale, potentially composite
+    # kHYPE if rotated to the wrong path). See memory/arch_hyperevm_lending_audit.md.
+    hyperlend_oracle_address: str = "0xC9Fb4fbE842d57EAc1dF3e641a281827493A630e"
+    hyperlend_whype_token: str = "0x5555555555555555555555555555555555555555"  # noqa: S105 — token addr
+    # The expected source. Drift between settings.redstone_hype_source and
+    # this value would indicate an inconsistent operator override; drift
+    # between THIS value and the live on-chain getSourceOfAsset(WHYPE) is the
+    # actual trap. Read-only — we LOG and let the operator manually update.
+    expected_hyperlend_whype_source: str = "0x40EA33eA76Fbe35e9FB422eDd175b8c8D84A63Cc"
+    # How often (in divergence-loop cycles) to verify the oracle source still
+    # routes to the expected aggregator. 60 cycles × 5s cadence = 5min between
+    # checks. Lower = noisier but faster detection; higher = quieter logs.
+    # The cost is one extra eth_call per check (~50-200ms on HyperEVM RPC).
+    oracle_source_check_every_n_cycles: int = 60
     hyperliquid_api_url: str = "https://api.hyperliquid.xyz/info"
     hype_divergence_poll_interval_s: int = 5
     hype_divergence_threshold_bps: float = 30.0

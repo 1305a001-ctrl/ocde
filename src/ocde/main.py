@@ -22,7 +22,7 @@ from .dispersion import compute_dispersion
 from .divergence import OraclePrice, compute_divergence
 from .health import make_app
 from .hype_divergence import HypeDivergenceSignal, VelocityHistory, compute_hype_divergence
-from .hyperevm_reader import read_redstone_hype_price
+from .hyperevm_reader import read_redstone_hype_price, verify_hyperlend_whype_source
 from .hyperliquid_reader import read_hl_hype_mid
 from .pyth_publisher import publish_pyth_price
 from .pyth_ws import PythSnapshot, parse_feed_ids, run_subscriber
@@ -124,11 +124,39 @@ async def hype_divergence_loop(stop_event: asyncio.Event) -> None:
       4. SET ocde:hype:divergence:latest (TTL 60s) + XADD stream entry.
     """
     history = VelocityHistory(window_n=settings.hype_divergence_velocity_window_n)
-    # Reuse one httpx client across cycles for connection pooling
+    # Trap-surface monitor: every N cycles, verify HyperLend has not rotated
+    # the WHYPE oracle source out from under us via setSourceOfAsset. On drift
+    # we log ERROR and emit a stale-source warning into each subsequent
+    # divergence record (consumers can downweight) but do NOT auto-rotate.
+    cycle_count = 0
     async with httpx.AsyncClient(timeout=5.0) as http_client:
         while not stop_event.is_set():
             cycle_start = time.monotonic()
             try:
+                # Source-drift check: cheap (one eth_call) but governance-
+                # rotation is rare; gate behind a counter to keep RPC load
+                # bounded. The first cycle (count=0) also fires so a
+                # mis-configured deploy fails loudly at boot, not 5min later.
+                if cycle_count % settings.oracle_source_check_every_n_cycles == 0:
+                    source_ok = await verify_hyperlend_whype_source(
+                        client=http_client,
+                    )
+                    if source_ok is False:
+                        # ERROR already logged by verify_hyperlend_whype_source.
+                        # The divergence signal still emits — downstream
+                        # consumers see the warning in stderr / docker logs
+                        # and the cron'd watchdog (gmx-strategies) publishes
+                        # to trap_alerts:gmx for telegram bridging.
+                        log.warning(
+                            "hype_divergence_loop.oracle_source_drift "
+                            "continuing emit with stale source; operator "
+                            "must update settings and redeploy",
+                        )
+                    # source_ok is None (unreachable): no warning — could be
+                    # transient RPC blip and the divergence-loop's own RPC
+                    # error path will surface that separately.
+                cycle_count += 1
+
                 results = await asyncio.gather(
                     read_chainlink_price("hype"),
                     read_redstone_hype_price(client=http_client),
